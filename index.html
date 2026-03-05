@@ -1,0 +1,318 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>الاتحاد العام لطلبة سوريا</title>
+
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Tajawal:wght@400;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+
+  <link rel="stylesheet" href="./styles.css" />
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <div class="logoBox" aria-label="شعار الاتحاد">
+        <img src="./assets/logo.png" alt="شعار الاتحاد" />
+      </div>
+
+      <div class="titles">
+        <h1>الاتحاد العام لطلبة سوريا</h1>
+        <p class="subtitle">مكتب الربط الداخلي</p>
+      </div>
+    </div>
+  </header>
+  
+  <main class="shell layout">
+    <div id="leftColumn" class="leftRail leftCol" aria-label="الخريطة ومفتاح الألوان">
+      <section id="statsSection" class="statsCard" aria-label="إحصائيات النشاط">
+        <div class="statsHeader">
+          <h3>نظرة عامة على نشاط الاتحاد</h3>
+        </div>
+        <div class="statsGrid">
+          <article class="statItem" role="status" aria-live="polite">
+            <div class="statIcon" aria-hidden="true">🏙️</div>
+            <div class="statMeta">
+              <div id="statCities" class="statValue">—</div>
+              <div class="statLabel">إجمالي المدن المسجلة</div>
+              <div class="statHint">عدد المدن الموجودة ضمن النظام</div>
+            </div>
+          </article>
+
+          <article class="statItem" role="status" aria-live="polite">
+            <div class="statIcon" aria-hidden="true">📅</div>
+            <div class="statMeta">
+              <div id="statEvents" class="statValue">—</div>
+              <div class="statLabel">إجمالي الفعاليات</div>
+              <div class="statHint">كل الفعاليات المسجلة حتى الآن</div>
+            </div>
+          </article>
+        </div>
+      </section>
+
+      <section id="mapSection" class="mapWrap" aria-label="خريطة تركيا">
+        <div class="mapHeader">
+          <div class="mapTitle">خريطة تركيا</div>
+          <div class="mapActions">
+            <button id="resetBtn" class="btn">إعادة الضبط</button>
+          </div>
+        </div>
+
+        <div class="mapBox" id="mapBox">
+          <div id="leafletMap" class="leafletMap" role="application" aria-label="خريطة تركيا التفاعلية"></div>
+        </div>
+      </section>
+
+      <section id="legendSection" class="legendCard" aria-label="مفتاح الألوان">
+        <div id="legendWrapper" class="legend">
+          <h3>مفتاح الألوان</h3>
+          <div id="legendItems" class="legendItems"></div>
+        </div>
+      </section>
+    </div>
+
+    <aside id="rightPanel" class="panel" aria-label="تفاصيل المدينة">
+      <div class="panelInner">
+        <h2>تفاصيل المدينة</h2>
+        <div class="hint" id="hint">
+          اختر مدينة لعرض التفاصيل.
+        </div>
+
+        <div class="infoCard" id="infoCard" hidden>
+          <div class="row">
+            <span class="label">المسؤول</span>
+            <span class="value" id="managerName">—</span>
+          </div>
+        </div>
+
+        <div class="infoCard" id="presidentCard">
+          <div id="presidentStatus" class="label">اختر مدينة لعرض رئيس الاتحاد.</div>
+          <div id="presidentName" class="value" style="margin-top:8px;">—</div>
+          <div id="presidentPhone" class="value" style="margin-top:6px;">—</div>
+          <div class="sectionActionRow">
+            <button type="button" id="actionAddPresident" class="btn action-btn" hidden>+ إضافة رئيس الاتحاد</button>
+          </div>
+        </div>
+
+        <section class="offices" id="officesSection">
+          <div class="officesHeader">
+            <h3>مكاتب المدينة</h3>
+            <button type="button" id="actionAddOffice" class="btn action-btn" hidden>+ إضافة مكتب</button>
+          </div>
+          <div id="officesStatus" class="officesStatus">اختر مدينة لعرض المكاتب.</div>
+          <ul id="officeList" class="officeList"></ul>
+        </section>
+
+        <section class="events" id="events" hidden>
+          <div class="eventsHeader">
+            <h3>الأحداث القادمة</h3>
+            <button type="button" id="actionAddEvent" class="btn action-btn" hidden>+ إضافة فعالية</button>
+          </div>
+          <ul id="eventList">
+            <!-- Example events (will be replaced dynamically) -->
+          </ul>
+        </section>
+
+        <div style="margin-top:12px; display:flex; align-items:center; gap:8px;">
+          <button id="manageCityBtn" class="btn" disabled>إدارة المدينة</button>
+          <div id="manageHint" style="color:var(--muted); font-weight:700;">اختر مدينة أولاً</div>
+        </div>
+
+        <section class="admin-section" id="adminSection" hidden>
+          <h3 class="admin-title">الإدارة</h3>
+
+          <form id="adminForm" class="admin-login">
+            <div class="row">
+              <label for="adminUser">اسم المستخدم</label>
+              <input id="adminUser" name="user" autocomplete="username" />
+            </div>
+            <div class="row" style="margin-top:8px;">
+              <label for="adminPass">كلمة المرور</label>
+              <input id="adminPass" name="pass" type="password" autocomplete="current-password" />
+            </div>
+            <div style="margin-top:10px; display:flex; gap:8px;">
+              <button type="submit" class="btn">دخول</button>
+              <button type="button" id="adminCancel" class="btn" style="background:#ddd;color:#000;">إلغاء</button>
+            </div>
+            <div id="adminError" style="color:#b91c1c; margin-top:8px; display:none; font-weight:700;"></div>
+          </form>
+
+            <div id="adminContent" class="admin-content" hidden>
+              <div style="font-weight:800; margin-bottom:8px;">مرحبًا في لوحة الإدارة</div>
+              <div id="adminInfo">—</div>
+              <div style="margin-top:8px;">
+                <button id="adminLogout" class="btn" style="background:#ddd;color:#000;">تسجيل الخروج</button>
+              </div>
+            </div>
+        </section>
+
+      </div>
+    </aside>
+  </main>
+
+  <!-- Add Event Modal -->
+  <div id="addModal" class="modal" hidden>
+    <div class="modalContent">
+      <div class="modalHeader">
+        <h3>إضافة فعالية جديدة</h3>
+      </div>
+      <div class="modalHeaderDivider" aria-hidden="true"></div>
+      <form id="addEventForm">
+        <div class="formSectionTitle">معلومات الفعالية</div>
+
+        <div class="formGrid">
+          <label class="field half">
+            <span class="fieldLabel">رقم الفعالية</span>
+            <input name="event_id" readonly />
+          </label>
+
+          <label class="field half">
+            <span class="fieldLabel">المدينة</span>
+            <input name="city" readonly />
+          </label>
+
+          <label class="field full">
+            <span class="fieldLabel">عنوان الفعالية</span>
+            <input name="title" />
+          </label>
+
+          <label class="field full">
+            <span class="fieldLabel">الوصف</span>
+            <textarea name="description"></textarea>
+          </label>
+        </div>
+
+        <div class="formSectionTitle">تفاصيل الفعالية</div>
+        <div class="formGrid">
+          <label class="field half">
+            <span class="fieldLabel">التاريخ</span>
+            <input name="date" type="date" />
+          </label>
+
+          <label class="field half">
+            <span class="fieldLabel">اسم المكتب</span>
+            <input name="office_name" />
+          </label>
+        </div>
+
+        <div class="formSectionTitle">المسؤولية</div>
+        <div class="formGrid">
+          <label class="field full">
+            <span class="fieldLabel">المسؤول</span>
+            <input name="responsible" />
+          </label>
+        </div>
+
+        <div class="formSectionTitle">ملاحظات إضافية</div>
+        <div class="formGrid">
+          <label class="field full">
+            <span class="fieldLabel">ملاحظات</span>
+            <textarea name="notes"></textarea>
+          </label>
+        </div>
+
+        <div class="modalActions">
+          <button type="button" id="addCancel" class="modalBtn modalBtn--cancel">إلغاء</button>
+          <button type="submit" id="addSave" class="modalBtn modalBtn--save">حفظ</button>
+        </div>
+        <div id="addMsg" style="margin-top:8px; font-weight:700; display:none;"></div>
+      </form>
+    </div>
+  </div>
+
+  <div id="presidentModal" class="modal" hidden>
+    <div class="modalContent">
+      <div class="modalHeader">
+        <h3>إضافة رئيس اتحاد</h3>
+      </div>
+      <div class="modalHeaderDivider" aria-hidden="true"></div>
+      <form id="addPresidentForm">
+        <div class="formGrid">
+          <label class="field full">
+            <span class="fieldLabel">المدينة</span>
+            <input name="city" required />
+          </label>
+          <label class="field full">
+            <span class="fieldLabel">اسم رئيس الاتحاد</span>
+            <input name="president_name" required />
+          </label>
+          <label class="field full">
+            <span class="fieldLabel">الهاتف</span>
+            <input name="phone" />
+          </label>
+          <label class="field full">
+            <span class="fieldLabel">ملاحظات</span>
+            <textarea name="notes"></textarea>
+          </label>
+        </div>
+        <div class="modalActions">
+          <button type="button" id="presidentCancel" class="modalBtn modalBtn--cancel">إلغاء</button>
+          <button type="submit" id="presidentSave" class="modalBtn modalBtn--save">حفظ</button>
+        </div>
+        <div id="presidentModalStatus" style="margin-top:8px; font-weight:700; display:none;"></div>
+      </form>
+    </div>
+  </div>
+
+  <div id="officeModal" class="modal" hidden>
+    <div class="modalContent">
+      <div class="modalHeader">
+        <h3>إضافة مكتب</h3>
+      </div>
+      <div class="modalHeaderDivider" aria-hidden="true"></div>
+      <form id="addOfficeForm">
+        <div class="formGrid">
+          <label class="field full">
+            <span class="fieldLabel">المدينة</span>
+            <input name="city" required readonly />
+          </label>
+          <label class="field full">
+            <span class="fieldLabel">اسم المكتب</span>
+            <input name="office_name" required />
+          </label>
+          <label class="field full">
+            <span class="fieldLabel">مدير المكتب</span>
+            <input name="office_manager" />
+          </label>
+          <label class="field full">
+            <span class="fieldLabel">رقم التواصل</span>
+            <input name="contact_number" />
+          </label>
+          <label class="field full">
+            <span class="fieldLabel">ملاحظات</span>
+            <textarea name="notes"></textarea>
+          </label>
+        </div>
+        <div class="modalActions">
+          <button type="button" id="officeCancel" class="modalBtn modalBtn--cancel">إلغاء</button>
+          <button type="submit" id="officeSave" class="modalBtn modalBtn--save">حفظ</button>
+        </div>
+        <div id="officeStatus" style="margin-top:8px; font-weight:700; display:none;"></div>
+      </form>
+    </div>
+  </div>
+
+  <div id="istanbulUnionModal" class="modal" hidden>
+    <div class="modalContent">
+      <div class="modalHeader">
+        <h3>اختيار اتحاد إسطنبول</h3>
+      </div>
+      <div class="modalHeaderDivider" aria-hidden="true"></div>
+      <div class="unionSelectNote">اختر الاتحاد الذي تريد عرض بياناته</div>
+      <div class="unionOptionList">
+        <button type="button" class="modalBtn modalBtn--save unionOptionBtn" data-union="اتحاد طلبة في جامعة جليشيم">اتحاد طلبة في جامعة جليشيم</button>
+        <button type="button" class="modalBtn modalBtn--save unionOptionBtn" data-union="اتحاد طلبة في جامعة نيشانتشي">اتحاد طلبة في جامعة نيشانتشي</button>
+        <button type="button" class="modalBtn modalBtn--save unionOptionBtn" data-union="اتحاد طلبة في جامعة إيستينيا">اتحاد طلبة في جامعة إيستينيا</button>
+        <button type="button" id="istanbulUnionCancel" class="modalBtn modalBtn--cancel unionCancelBtn">إلغاء</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script src="https://unpkg.com/polylabel@1.1.0/polylabel.js"></script>
+  <script src="./app.js"></script>
+</body>
+</html>
