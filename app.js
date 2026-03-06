@@ -719,30 +719,42 @@ function renderOfficesSection(state, cityName, offices = [], errorMessage = '') 
   const officesStatus = document.getElementById('officesStatus');
   const officeList = document.getElementById('officeList');
   if (!officesSection || !officesStatus || !officeList) return;
+  const isMobile = (() => {
+    try {
+      return window.matchMedia('(max-width: 900px)').matches;
+    } catch {
+      return false;
+    }
+  })();
 
   officeList.innerHTML = '';
 
   if (state === 'idle') {
+    officesStatus.hidden = false;
     officesStatus.textContent = 'اختر مدينة لعرض المكاتب.';
     return;
   }
 
   if (state === 'loading') {
+    officesStatus.hidden = false;
     officesStatus.textContent = 'جارٍ تحميل مكاتب المدينة...';
     return;
   }
 
   if (state === 'error') {
+    officesStatus.hidden = false;
     officesStatus.textContent = `تعذر تحميل المكاتب: ${errorMessage || 'خطأ غير معروف'}`;
     return;
   }
 
   if (!Array.isArray(offices) || offices.length === 0) {
+    officesStatus.hidden = false;
     officesStatus.textContent = 'لا توجد مكاتب مسجلة لهذه المدينة';
     return;
   }
 
-  officesStatus.textContent = `عدد المكاتب: ${offices.length}`;
+  officesStatus.hidden = isMobile;
+  officesStatus.textContent = isMobile ? '' : `عدد المكاتب: ${offices.length}`;
   offices.forEach((office) => {
     const officeName = safe(pickOfficeValue(office, ['office_name', 'Office Name', 'officeName']));
     const officeManager = safe(pickOfficeValue(office, ['office_manager', 'Office Manager', 'officeManager', 'responsible']));
@@ -1340,9 +1352,20 @@ async function addPresident(presidentObj) {
   const leafletContainer = document.getElementById('leafletMap');
   const resetBtn = document.getElementById("resetBtn");
 
+  const isTouchEnvironment = () => {
+    try {
+      return window.matchMedia('(pointer: coarse)').matches
+        || ('ontouchstart' in window)
+        || (navigator && navigator.maxTouchPoints > 0);
+    } catch {
+      return ('ontouchstart' in window);
+    }
+  };
+
   function installMapScrollLock(targetEl) {
     if (!targetEl || targetEl.dataset.scrollLockInstalled === '1') return;
     targetEl.dataset.scrollLockInstalled = '1';
+    const touchDevice = isTouchEnvironment();
 
     const stopGestureScroll = (e) => {
       e.preventDefault();
@@ -1353,11 +1376,10 @@ async function addPresident(presidentObj) {
       e.preventDefault();
     };
 
-    targetEl.addEventListener('wheel', stopGestureScroll, { passive: false });
-    targetEl.addEventListener('touchmove', stopGestureScroll, { passive: false });
+    if (!touchDevice) {
+      targetEl.addEventListener('wheel', stopGestureScroll, { passive: false });
+    }
     targetEl.addEventListener('dragstart', stopNativeDrag);
-    targetEl.addEventListener('gesturestart', stopGestureScroll, { passive: false });
-    targetEl.addEventListener('gesturechange', stopGestureScroll, { passive: false });
   }
 
   // Admin UI elements
@@ -1583,11 +1605,18 @@ async function addPresident(presidentObj) {
 
   function buildCityTooltipHtml(cityName) {
     const summary = getCityActivitySummary(cityName);
+    const showCounters = (() => {
+      try {
+        return !window.matchMedia('(max-width: 900px)').matches;
+      } catch {
+        return true;
+      }
+    })();
     return `
       <div class="cityHoverTooltip">
         <div class="cityHoverTooltip__title">${safe(summary.city)}</div>
-        <div class="cityHoverTooltip__row">عدد المكاتب المسجلة: ${summary.officesCount}</div>
-        <div class="cityHoverTooltip__row">عدد الفعاليات: ${summary.eventsCount}</div>
+        ${showCounters ? `<div class="cityHoverTooltip__row">عدد المكاتب المسجلة: ${summary.officesCount}</div>` : ''}
+        ${showCounters ? `<div class="cityHoverTooltip__row">عدد الفعاليات: ${summary.eventsCount}</div>` : ''}
       </div>
     `;
   }
@@ -1714,6 +1743,9 @@ async function addPresident(presidentObj) {
     map = L.map('leafletMap', {
       zoomControl: true,
       scrollWheelZoom: false,
+      dragging: true,
+      touchZoom: true,
+      tap: true,
     });
     map.setView([39.0, 35.0], 6);
 

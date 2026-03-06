@@ -696,6 +696,24 @@ body{
 @media (max-width: 900px){
   .mapBox{
     height: 420px;
+    touch-action: pan-x pan-y pinch-zoom;
+  }
+
+  .leafletMap{
+    touch-action: pan-x pan-y pinch-zoom;
+  }
+
+  .panelInner{
+    padding:14px;
+  }
+
+  .btn{
+    min-height:44px;
+    padding:10px 14px;
+  }
+
+  .mapHeader{
+    padding:10px 12px;
   }
 }
 
