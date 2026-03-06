@@ -53,8 +53,15 @@ const officeRequestsInFlight = new Map();
 const presidentRequestsInFlight = new Map();
 let presidentsReadActionUnsupported = false;
 const CITY_WARMUP_CONCURRENCY = 4;
+const BULK_DATA_TTL_MS = 5 * 60 * 1000;
 let isAdminLoggedIn = sessionStorage.getItem(ADMIN_SESSION_KEY) === 'true';
 const selectedUnionByCity = new Map();
+const bulkOfficesState = { rows: [], fetchedAt: 0, promise: null };
+const bulkPresidentsState = { rows: [], fetchedAt: 0, promise: null };
+
+function isBulkStateFresh(state) {
+  return !!state && !!state.fetchedAt && (Date.now() - state.fetchedAt) < BULK_DATA_TTL_MS;
+}
 
 function getCachedValue(cacheMap, metaMap, cityKey) {
   const meta = metaMap.get(cityKey);
@@ -431,6 +438,75 @@ function filterRowsBySelectedUnion(cityName, rows) {
   return list.filter((row) => normalizeArabicLoose(getUnionFromRecord(row)) === target);
 }
 
+function hydrateOfficesCacheFromRows(rows) {
+  const grouped = new Map();
+  const list = Array.isArray(rows) ? rows : [];
+
+  list.forEach((office) => {
+    const cityKey = normalizeCityToArabic(office?.city || office?.City || '');
+    if (!cityKey) return;
+    if (!grouped.has(cityKey)) grouped.set(cityKey, []);
+    grouped.get(cityKey).push({ ...office, city: cityKey });
+  });
+
+  grouped.forEach((offices, cityKey) => {
+    setCachedValue(officesByCity, officesCacheMeta, cityKey, offices);
+  });
+}
+
+function hydratePresidentsCacheFromRows(rows) {
+  const list = Array.isArray(rows) ? rows : [];
+
+  list.forEach((row) => {
+    const cityRaw = row?.city || row?.City || '';
+    const cityKey = normalizeCityToArabic(cityRaw);
+    if (!cityKey) return;
+
+    const unionName = getUnionFromRecord(row);
+    const scopeKey = getScopeKey(cityKey, unionName);
+    const effectiveCity = getCityForApi(cityKey, unionName) || cityKey;
+
+    setCachedValue(presidentByCity, presidentsCacheMeta, scopeKey, row);
+    if (!presidentByCity.has(cityKey)) {
+      setCachedValue(presidentByCity, presidentsCacheMeta, cityKey, row);
+    }
+    if (effectiveCity) {
+      setCachedValue(presidentByCity, presidentsCacheMeta, effectiveCity, row);
+    }
+  });
+}
+
+function pickPresidentFromRows(rows, cityArabic, selectedUnion, effectiveCity) {
+  const list = Array.isArray(rows) ? rows : [];
+  if (!cityArabic || !list.length) return null;
+
+  const cityLoose = normalizeArabicLoose(cityArabic);
+  const effectiveLoose = normalizeArabicLoose(effectiveCity || cityArabic);
+
+  let cityMatched = list.filter((row) => {
+    const rowCity = row?.city || row?.City || '';
+    const rowArabic = normalizeCityToArabic(rowCity);
+    const rowLoose = normalizeArabicLoose(rowArabic || rowCity);
+    if (cityArabic === ISTANBUL_CITY && selectedUnion) {
+      return rowLoose === cityLoose || rowLoose === effectiveLoose;
+    }
+    return rowLoose === cityLoose;
+  });
+
+  if (cityArabic === ISTANBUL_CITY && selectedUnion) {
+    const selectedUnionLoose = normalizeArabicLoose(selectedUnion);
+    if (cityMatched.length) {
+      const byUnion = cityMatched.filter((row) => normalizeArabicLoose(getUnionFromRecord(row)) === selectedUnionLoose);
+      if (byUnion.length) cityMatched = byUnion;
+    } else {
+      const unionMatched = list.filter((row) => normalizeArabicLoose(getUnionFromRecord(row)) === selectedUnionLoose);
+      if (unionMatched.length) cityMatched = unionMatched;
+    }
+  }
+
+  return cityMatched.length ? cityMatched[0] : null;
+}
+
 async function queryPresidentsByCity(cityQuery, withAction = true) {
   const cityValue = String(cityQuery || '').trim();
   const cityParam = cityValue ? `&city=${encodeURIComponent(cityValue)}` : '';
@@ -479,6 +555,51 @@ async function queryPresidentsByCity(cityQuery, withAction = true) {
   };
 }
 
+async function ensureAllPresidentsLoaded(forceRefresh = false) {
+  if (!forceRefresh && isBulkStateFresh(bulkPresidentsState)) {
+    return bulkPresidentsState.rows;
+  }
+
+  if (bulkPresidentsState.promise) {
+    return bulkPresidentsState.promise;
+  }
+
+  bulkPresidentsState.promise = (async () => {
+    const attempts = presidentsReadActionUnsupported ? [false] : [true, false];
+    let rows = [];
+    let loaded = false;
+
+    for (const withAction of attempts) {
+      try {
+        const result = await queryPresidentsByCity('', withAction);
+        loaded = true;
+        if (result?.unsupportedAction) {
+          presidentsReadActionUnsupported = true;
+        }
+        rows = Array.isArray(result?.presidents) ? result.presidents : [];
+        if (rows.length) break;
+      } catch {
+        // try next strategy
+      }
+    }
+
+    if (!loaded) {
+      throw new Error('PRESIDENTS_BULK_LOAD_FAILED');
+    }
+
+    bulkPresidentsState.rows = Array.isArray(rows) ? rows : [];
+    bulkPresidentsState.fetchedAt = Date.now();
+    hydratePresidentsCacheFromRows(bulkPresidentsState.rows);
+    return bulkPresidentsState.rows;
+  })();
+
+  try {
+    return await bulkPresidentsState.promise;
+  } finally {
+    bulkPresidentsState.promise = null;
+  }
+}
+
 async function fetchPresidentByCity(cityName) {
   const cityArabic = normalizeCityToArabic(cityName);
   if (!cityArabic) return null;
@@ -488,6 +609,18 @@ async function fetchPresidentByCity(cityName) {
 
   const cachedPresident = getCachedValue(presidentByCity, presidentsCacheMeta, scopeKey);
   if (cachedPresident !== undefined) return cachedPresident;
+
+  try {
+    const bulkRows = await ensureAllPresidentsLoaded(false);
+    if (Array.isArray(bulkRows) && bulkRows.length) {
+      const localMatch = pickPresidentFromRows(bulkRows, cityArabic, selectedUnion, effectiveCity);
+      const localResult = localMatch || null;
+      setCachedValue(presidentByCity, presidentsCacheMeta, scopeKey, localResult);
+      return localResult;
+    }
+  } catch {
+    // fall back to targeted city query
+  }
 
   if (presidentRequestsInFlight.has(scopeKey)) {
     return presidentRequestsInFlight.get(scopeKey);
@@ -779,6 +912,51 @@ function renderOfficesSection(state, cityName, offices = [], errorMessage = '') 
   });
 }
 
+async function ensureAllOfficesLoaded(forceRefresh = false) {
+  if (!forceRefresh && isBulkStateFresh(bulkOfficesState)) {
+    return bulkOfficesState.rows;
+  }
+
+  if (bulkOfficesState.promise) {
+    return bulkOfficesState.promise;
+  }
+
+  bulkOfficesState.promise = (async () => {
+    const url = `${OFFICES_API_URL}?action=offices`;
+    const res = await fetch(url, { method: 'GET', redirect: 'follow' });
+    if (!res.ok) throw new Error(`OFFICES_HTTP_${res.status}`);
+
+    const text = await res.text();
+    let json;
+    try {
+      json = JSON.parse(text);
+    } catch {
+      throw new Error('OFFICES_INVALID_JSON');
+    }
+
+    if (!json || json.ok !== true) {
+      throw new Error(String(json?.error || json?.message || 'OFFICES_API_ERROR').trim());
+    }
+
+    const rows = Array.isArray(json.offices)
+      ? json.offices
+      : Array.isArray(json.data)
+        ? json.data
+        : [];
+
+    bulkOfficesState.rows = rows;
+    bulkOfficesState.fetchedAt = Date.now();
+    hydrateOfficesCacheFromRows(rows);
+    return rows;
+  })();
+
+  try {
+    return await bulkOfficesState.promise;
+  } finally {
+    bulkOfficesState.promise = null;
+  }
+}
+
 async function fetchOffices(city) {
   const cityKey = normalizeCityToArabic(city);
   if (!cityKey) {
@@ -788,6 +966,14 @@ async function fetchOffices(city) {
 
   const cachedOffices = getCachedValue(officesByCity, officesCacheMeta, cityKey);
   if (cachedOffices !== undefined) return cachedOffices;
+
+  try {
+    await ensureAllOfficesLoaded(false);
+    const bulkCached = getCachedValue(officesByCity, officesCacheMeta, cityKey);
+    if (bulkCached !== undefined) return bulkCached;
+  } catch {
+    // fall back to city-specific request
+  }
 
   if (officeRequestsInFlight.has(cityKey)) {
     return officeRequestsInFlight.get(cityKey);
@@ -1172,7 +1358,18 @@ async function addPresident(presidentObj) {
 
   // Generate next event id by fetching current events from API (ensures up-to-date)
   async function generateNextEventId() {
-    const all = await fetchAllEvents();
+    let all = [];
+
+    if (eventsByCity.size > 0) {
+      eventsByCity.forEach((rows) => {
+        if (Array.isArray(rows)) all.push(...rows);
+      });
+    }
+
+    if (!all.length) {
+      all = await fetchAllEvents();
+    }
+
     let max = 0;
     all.forEach(ev => {
       const id = (ev.event_id || ev.eventId || ev.id || '').toString().trim();
@@ -1186,6 +1383,14 @@ async function addPresident(presidentObj) {
     const padded = String(next).padStart(3, '0');
     return `EVT${padded}`;
   }
+
+  ensureAllOfficesLoaded(false).catch((err) => {
+    console.warn('Initial offices preload failed:', err);
+  });
+
+  ensureAllPresidentsLoaded(false).catch((err) => {
+    console.warn('Initial presidents preload failed:', err);
+  });
 
   // initial fetch of events
   await fetchEvents();
@@ -1270,44 +1475,20 @@ async function addPresident(presidentObj) {
     };
 
     const fetchAllPresidentsForWarmup = async () => {
-      const candidates = [
-        `${PRESIDENTS_API_URL}?action=presidents`,
-        `${PRESIDENTS_API_URL}`,
-      ];
-
-      for (const url of candidates) {
-        try {
-          const res = await fetch(url, { method: 'GET', redirect: 'follow' });
-          if (!res.ok) continue;
-          const text = await res.text();
-          let json = null;
-          try { json = JSON.parse(text); } catch { json = null; }
-          if (!json || json.ok !== true) continue;
-          const rows = Array.isArray(json.presidents) ? json.presidents : [];
-          if (!rows.length) continue;
-          hydratePresidentCache(rows);
-          return true;
-        } catch {
-          // fallback to next candidate
-        }
+      try {
+        const rows = await ensureAllPresidentsLoaded(false);
+        if (!Array.isArray(rows) || !rows.length) return false;
+        hydratePresidentCache(rows);
+        return true;
+      } catch {
+        return false;
       }
-      return false;
     };
 
     const fetchAllOfficesForWarmup = async () => {
-      const url = `${OFFICES_API_URL}?action=offices`;
       try {
-        const res = await fetch(url, { method: 'GET', redirect: 'follow' });
-        if (!res.ok) return false;
-        const text = await res.text();
-        let json = null;
-        try { json = JSON.parse(text); } catch { json = null; }
-        if (!json || json.ok !== true) return false;
-        const rows = Array.isArray(json.offices)
-          ? json.offices
-          : Array.isArray(json.data)
-            ? json.data
-            : [];
+        const rows = await ensureAllOfficesLoaded(false);
+        if (!Array.isArray(rows)) return false;
         hydrateOfficesCache(rows);
         return rows.length > 0;
       } catch {
@@ -2108,6 +2289,19 @@ async function addPresident(presidentObj) {
                 throw new Error('API_LOGICAL_ERROR');
               }
 
+              bulkPresidentsState.fetchedAt = Date.now();
+              bulkPresidentsState.rows = [
+                ...bulkPresidentsState.rows,
+                {
+                  city: payload.city,
+                  union_name: payload.union_name,
+                  president_name: payload.president_name,
+                  phone: payload.phone,
+                  notes: payload.notes,
+                },
+              ];
+              hydratePresidentsCacheFromRows(bulkPresidentsState.rows);
+
               invalidatePresidentCacheForCity(payload.city, payload.union_name);
 
               showPresidentStatus('تمت إضافة رئيس الاتحاد بنجاح', false, 2600);
@@ -2186,6 +2380,9 @@ async function addPresident(presidentObj) {
               officesByCity.set(cityToRender, [...existing, normalizedOffice]);
               setCachedValue(officesByCity, officesCacheMeta, cityToRender, officesByCity.get(cityToRender));
               renderOfficesSection('success', cityToRender, filterRowsBySelectedUnion(cityToRender, officesByCity.get(cityToRender) || []));
+
+              bulkOfficesState.fetchedAt = Date.now();
+              bulkOfficesState.rows = [...bulkOfficesState.rows, { ...payload }];
 
               showOfficeStatus('تمت إضافة المكتب بنجاح');
 
@@ -2329,56 +2526,54 @@ async function addPresident(presidentObj) {
   };
 
   const toArray = (value) => (Array.isArray(value) ? value : []);
+  let citiesCountCache = null;
+  let refreshTimer = null;
 
-  const uniqueNonEmpty = (values) => {
-    const bag = new Set();
-    values.forEach((v) => {
-      const text = String(v || '').trim();
-      if (text) bag.add(text);
-    });
-    return bag;
-  };
-
-  const fetchJsonSafe = async (url) => {
+  const countFromRegions = async () => {
+    if (typeof citiesCountCache === 'number') return citiesCountCache;
     try {
-      const res = await fetch(url, { method: 'GET', redirect: 'follow' });
-      if (!res.ok) return null;
-      const text = await res.text();
-      try {
-        return JSON.parse(text);
-      } catch {
-        return null;
-      }
+      const regions = await loadJSON(PATHS.regions);
+      const bag = new Set();
+      toArray(regions).forEach((region) => {
+        toArray(region?.cities).forEach((city) => {
+          const cityKey = normalizeCityToArabic(city);
+          if (cityKey) bag.add(cityKey);
+        });
+      });
+      citiesCountCache = bag.size;
+      return citiesCountCache;
     } catch {
-      return null;
+      citiesCountCache = 0;
+      return 0;
     }
   };
 
-  const countFromRegions = async () => {
-    const json = await fetchJsonSafe(PATHS.regions);
-    const regions = toArray(json);
-    const allCities = [];
-    regions.forEach((region) => {
-      toArray(region?.cities).forEach((city) => allCities.push(normalizeCityToArabic(city)));
+  const countEventsFromMemory = () => {
+    let total = 0;
+    eventsByCity.forEach((rows) => {
+      total += Array.isArray(rows) ? rows.length : 0;
     });
-    return uniqueNonEmpty(allCities).size;
+    return total;
   };
-
-  const getAllEvents = async () => {
-    const json = await fetchJsonSafe(`${APPS_SCRIPT_URL}?action=events`);
-    return toArray(json?.events);
-  };
-
-  let refreshTimer = null;
 
   const refreshStats = async () => {
-    const [cities, events] = await Promise.all([
-      countFromRegions(),
-      getAllEvents(),
-    ]);
+    const cities = await countFromRegions();
+    let eventsCount = countEventsFromMemory();
+
+    if (eventsCount === 0) {
+      try {
+        const res = await fetch(`${APPS_SCRIPT_URL}?action=events`, { method: 'GET', redirect: 'follow' });
+        if (res.ok) {
+          const json = await res.json();
+          eventsCount = toArray(json?.events).length;
+        }
+      } catch {
+        // keep memory-derived value
+      }
+    }
 
     setStat(statsEls.cities, cities);
-    setStat(statsEls.events, events.length);
+    setStat(statsEls.events, eventsCount);
   };
 
   const requestRefreshSoon = (delay = 500) => {
@@ -2405,9 +2600,7 @@ async function addPresident(presidentObj) {
       console.warn('Initial stats load failed:', err);
     });
 
-    bindRefreshOnSubmit('addOfficeForm');
     bindRefreshOnSubmit('addEventForm');
-    bindRefreshOnSubmit('addPresidentForm');
   };
 
   if (document.readyState === 'loading') {
