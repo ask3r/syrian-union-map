@@ -1592,35 +1592,6 @@ async function addPresident(presidentObj) {
     };
   }
 
-  function getCityActivitySummary(cityName) {
-    const cityKey = normalizeCityToArabic(cityName);
-    const offices = getOfficesForCity(cityKey);
-    const events = (getEventsForCity(cityKey) || EVENTS[cityKey]) || [];
-    return {
-      city: cityKey || cityName,
-      officesCount: Array.isArray(offices) ? offices.length : 0,
-      eventsCount: Array.isArray(events) ? events.length : 0,
-    };
-  }
-
-  function buildCityTooltipHtml(cityName) {
-    const summary = getCityActivitySummary(cityName);
-    const showCounters = (() => {
-      try {
-        return !window.matchMedia('(max-width: 900px)').matches;
-      } catch {
-        return true;
-      }
-    })();
-    return `
-      <div class="cityHoverTooltip">
-        <div class="cityHoverTooltip__title">${safe(summary.city)}</div>
-        ${showCounters ? `<div class="cityHoverTooltip__row">عدد المكاتب المسجلة: ${summary.officesCount}</div>` : ''}
-        ${showCounters ? `<div class="cityHoverTooltip__row">عدد الفعاليات: ${summary.eventsCount}</div>` : ''}
-      </div>
-    `;
-  }
-
   function buildLabelRect(entry) {
     const p = map.latLngToContainerPoint(entry.latlng);
     const fontSize = 11;
@@ -1718,11 +1689,6 @@ async function addPresident(presidentObj) {
       provincesLayer.resetStyle(selectedProvinceLayer);
       selectedProvinceLayer = null;
     }
-    if (provincesLayer) {
-      provincesLayer.eachLayer((layer) => {
-        if (layer && typeof layer.closeTooltip === 'function') layer.closeTooltip();
-      });
-    }
     setPanel(null);
     const eventsContainer = document.getElementById("events");
     const eventList = document.getElementById("eventList");
@@ -1793,14 +1759,7 @@ async function addPresident(presidentObj) {
         };
         provinceLabels.set(labelEntry.id, labelEntry);
 
-        if (region && !isTouchEnvironment()) {
-          lyr.bindTooltip(buildCityTooltipHtml(arName), {
-            direction: 'top',
-            sticky: true,
-            className: 'city-hover-tooltip',
-            opacity: 1,
-          });
-
+        if (region) {
           lyr.on('mouseover', () => {
             const layerEl = lyr.getElement();
             if (layerEl) layerEl.classList.add('province-hover-glow');
@@ -1808,9 +1767,6 @@ async function addPresident(presidentObj) {
             if (selectedProvinceLayer !== lyr) {
               lyr.setStyle({ weight: 2, color: '#0f172a' });
             }
-
-            lyr.setTooltipContent(buildCityTooltipHtml(arName));
-            lyr.openTooltip();
           });
 
           lyr.on('mouseout', () => {
@@ -1820,18 +1776,12 @@ async function addPresident(presidentObj) {
             if (selectedProvinceLayer !== lyr) {
               provincesLayer.resetStyle(lyr);
             }
-
-            lyr.closeTooltip();
           });
         }
 
         lyr.on('click', async (evt) => {
           if (evt && evt.originalEvent) {
             L.DomEvent.stopPropagation(evt.originalEvent);
-          }
-
-          if (typeof lyr.closeTooltip === 'function') {
-            lyr.closeTooltip();
           }
 
           if (!region) {
@@ -1887,12 +1837,6 @@ async function addPresident(presidentObj) {
     map.on('click', () => clearSelection());
     map.on('focus click', () => map.scrollWheelZoom.enable());
     map.on('zoomend moveend', () => placeProvinceLabels());
-    map.on('zoomstart movestart', () => {
-      if (!provincesLayer) return;
-      provincesLayer.eachLayer((layer) => {
-        if (layer && typeof layer.closeTooltip === 'function') layer.closeTooltip();
-      });
-    });
 
     const mapEl = map.getContainer();
     installMapScrollLock(mapEl);
